@@ -187,19 +187,27 @@ async def perform_scan(request: ScanRequest):
             pass  # Graph update is optional
         
         # 5. Calculate exposure score
+        password_compromised = False
+        if result.password_exposed and isinstance(result.password_exposed, dict):
+            password_compromised = result.password_exposed.get("found", False)
+        
         result.exposure_score = calculate_exposure_score(
             breach_count=len([b for b in result.breaches if "error" not in b and "warning" not in b]),
             social_count=len([s for s in result.social_accounts if "error" not in s]),
-            password_compromised=result.password_exposed.get("found", False) if result.password_exposed else False
+            password_compromised=password_compromised
         )
         
         # Store exposure score
+        password_compromised = False
+        if result.password_exposed and isinstance(result.password_exposed, dict):
+            password_compromised = result.password_exposed.get("found", False)
+        
         score_record = ExposureScore(
             email=request.email,
             score=result.exposure_score,
             breach_count=len(result.breaches),
             social_account_count=len(result.social_accounts),
-            password_compromised=result.password_exposed.get("found", False) if result.password_exposed else False,
+            password_compromised=password_compromised,
             details={
                 "breaches": len(result.breaches),
                 "social_accounts": len(result.social_accounts),
