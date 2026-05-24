@@ -16,8 +16,38 @@ class SocialFootprintScanner:
         self.sherlock_path = self._find_sherlock()
         self.results = []
     
-    def _find_sherlock(self) -> Optional[Path]:
-        """Find Sherlock installation"""
+    def _find_sherlock(self) -> Optional[str]:
+        """Find Sherlock installation - works on both Linux and Windows"""
+        import sys
+        import os
+        
+        # Try to find sherlock executable in PATH or venv Scripts directory
+        if sys.platform == "win32":
+            # On Windows, check venv Scripts directory first
+            scripts_dir = os.path.join(os.path.dirname(sys.executable), "Scripts")
+            sherlock_exe = os.path.join(scripts_dir, "sherlock.exe")
+            if os.path.exists(sherlock_exe):
+                return sherlock_exe
+            
+            # Also try without .exe extension
+            sherlock_exe_no_ext = os.path.join(scripts_dir, "sherlock")
+            if os.path.exists(sherlock_exe_no_ext):
+                return sherlock_exe_no_ext
+        
+        # Try system-wide installation (Linux/Mac/Windows)
+        try:
+            result = subprocess.run(
+                ["which", "sherlock"] if sys.platform != "win32" else ["where", "sherlock"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                return result.stdout.strip().split('\n')[0]
+        except Exception:
+            pass
+        
+        # Fallback to possible paths
         possible_paths = [
             Path("./sherlock/sherlock.py"),
             Path("../sherlock/sherlock.py"),
@@ -26,20 +56,7 @@ class SocialFootprintScanner:
         
         for path in possible_paths:
             if path.exists():
-                return path
-        
-        # Try to find via which
-        try:
-            result = subprocess.run(
-                ["which", "sherlock"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                return Path(result.stdout.strip())
-        except Exception:
-            pass
+                return str(path)
         
         return None
     
@@ -53,19 +70,42 @@ class SocialFootprintScanner:
         
         if not self.sherlock_path:
             raise RuntimeError(
-                "Sherlock not found. Install it with: git clone https://github.com/sherlock-project/sherlock.git"
+                "Sherlock not found. Install it with: pip install sherlock-project"
             )
         
         try:
-            cmd = [
-                "python3",
-                str(self.sherlock_path),
-                username,
-                "--json",
-                "--timeout",
-                str(timeout),
-                "--no-color"
-            ]
+            # Build command - use sherlock executable directly (works on Windows and Linux)
+            import sys
+            if sys.platform == "win32":
+                cmd = [
+                    self.sherlock_path,
+                    username,
+                    "--json",
+                    "--timeout",
+                    str(timeout),
+                    "--no-color"
+                ]
+            else:
+                # On Linux/Mac, run with python if it's a .py file
+                if self.sherlock_path.endswith('.py'):
+                    cmd = [
+                        "python3",
+                        self.sherlock_path,
+                        username,
+                        "--json",
+                        "--timeout",
+                        str(timeout),
+                        "--no-color"
+                    ]
+                else:
+                    cmd = [
+                        self.sherlock_path,
+                        username,
+                        "--json",
+                        "--timeout",
+                        str(timeout),
+                        "--no-color"
+                    ]
             
             result = subprocess.run(
                 cmd,
