@@ -40,6 +40,7 @@ def run_sherlock(username: str) -> List[Dict[str, Any]]:
     """
     Runs Sherlock to find social media accounts by username.
     Returns a list of found accounts.
+    Uses --print-found for text output which is more reliable across versions.
     """
     sherlock_cmd = get_venv_script_path("sherlock")
     results = []
@@ -65,20 +66,26 @@ def run_sherlock(username: str) -> List[Dict[str, Any]]:
             creationflags=creationflags
         )
         
+        # Check for command-line errors first
+        if result.returncode != 0 and result.stderr:
+            err_msg = result.stderr.strip()
+            if "usage" in err_msg.lower() or "error:" in err_msg.lower():
+                print(f"⚠️ Sherlock command error: {err_msg}")
+                return [{"error": f"Sherlock command error: {err_msg}"}]
+        
         # Parse Sherlock output
         # Format: "SiteName: https://url..." for found accounts
         if not result.stdout.strip():
-            if result.stderr and "usage" in result.stderr.lower():
-                return [{"error": f"Sherlock command error: {result.stderr.strip()}"}]
             return [{"warning": f"No accounts found for username '{username}'"}]
 
         # Parse line by line looking for found accounts
         for line in result.stdout.splitlines():
             line = line.strip()
-            if not line or line.startswith("[") or line.startswith("-"):
+            if not line or line.startswith("[") or line.startswith("-") or line.startswith("INFO"):
                 continue
             
             # Look for lines with URLs (found accounts)
+            # Expected format: "Twitter: https://twitter.com/username"
             if "http" in line and ":" in line:
                 parts = line.split(":", 1)
                 if len(parts) >= 2:
@@ -93,17 +100,20 @@ def run_sherlock(username: str) -> List[Dict[str, Any]]:
                             "status": "Found"
                         })
         
-        if not results and result.returncode == 0:
+        if not results:
+            # If we got output but couldn't parse it, log it for debugging
+            if result.stdout.strip():
+                print(f"⚠️ Sherlock produced output but no URLs parsed. Output preview: {result.stdout[:200]}")
             return [{"warning": f"No accounts found for username '{username}'"}]
 
     except FileNotFoundError:
         return [{"error": f"Sherlock executable not found at {sherlock_cmd}"}]
     except subprocess.TimeoutExpired:
-        return [{"error": "Sherlock scan timed out after 60 seconds."}]
+        return [{"error": "Sherlock scan timed out after 30 seconds."}]
     except Exception as e:
         return [{"error": f"Sherlock error: {str(e)}"}]
     
-    return results if results else [{"warning": f"No accounts found for username '{username}'"}]
+    return results
 
 def run_holehe(email: str) -> List[Dict[str, Any]]:
     """
