@@ -221,6 +221,16 @@ def display_scan_results(result: Dict[str, Any]):
                     display_cols = [c for c in ['platform', 'username', 'url', 'source_tool'] if c in df.columns]
                     st.dataframe(df[display_cols], use_container_width=True)
     
+    # View Relationship Graph Button
+    st.markdown("---")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.subheader("🕸️ Relationship Graph")
+        st.write("Visualize connections between email, breaches, and social accounts")
+    with col2:
+        if st.button("🕸️ View Graph", use_container_width=True, key=f"view_graph_btn_{result.get('email', 'unknown')}"):
+            show_relationship_graph(result)
+    
     # Password exposure
     if result.get('password_exposed'):
         with st.expander("🔐 Password Exposure Check"):
@@ -233,6 +243,143 @@ def display_scan_results(result: Dict[str, Any]):
             else:
                 st.success("✅ Good news! This password wasn't found in known breaches.")
                 st.info("However, always use unique passwords for each account.")
+
+
+def show_relationship_graph(result: Dict[str, Any]):
+    """Display relationship graph between email, breaches, and social accounts"""
+    import plotly.graph_objects as go
+    
+    st.markdown("### 🕸️ Relationship Graph")
+    
+    # Create nodes and edges
+    nodes = []
+    edges = []
+    
+    # Central email node
+    email = result.get('email', 'unknown')
+    nodes.append({'id': email, 'label': email, 'type': 'email', 'color': '#1f77b4', 'size': 30})
+    
+    # Add breach nodes
+    breaches = result.get('breaches', [])
+    for i, breach in enumerate(breaches):
+        if 'error' not in breach and 'warning' not in breach:
+            breach_name = breach.get('Name', f'Breach {i+1}')
+            node_id = f"breach_{breach_name}"
+            nodes.append({
+                'id': node_id,
+                'label': breach_name[:20] + ('...' if len(breach_name) > 20 else ''),
+                'type': 'breach',
+                'color': '#d62728',
+                'size': 20
+            })
+            edges.append({'from': email, 'to': node_id, 'value': 1})
+    
+    # Add social account nodes
+    social_accounts = result.get('social_accounts', [])
+    for i, account in enumerate(social_accounts):
+        if 'error' not in account:
+            platform = account.get('platform', f'Social {i+1}')
+            username = account.get('username', '')
+            node_id = f"social_{platform}_{username}"
+            nodes.append({
+                'id': node_id,
+                'label': f"{platform}\n{username}"[:25],
+                'type': 'social',
+                'color': '#2ca02c',
+                'size': 15
+            })
+            edges.append({'from': email, 'to': node_id, 'value': 1})
+    
+    if len(nodes) <= 1:
+        st.info("ℹ️ Not enough data to create a graph. Run a scan with breaches or social accounts.")
+        return
+    
+    # Create Plotly figure
+    node_ids = [n['id'] for n in nodes]
+    node_labels = [n['label'] for n in nodes]
+    node_colors = [n['color'] for n in nodes]
+    node_sizes = [n['size'] for n in nodes]
+    
+    # Create edge coordinates
+    edge_x, edge_y = [], []
+    for edge in edges:
+        from_node = next((n for n in nodes if n['id'] == edge['from']), None)
+        to_node = next((n for n in nodes if n['id'] == edge['to']), None)
+        if from_node and to_node:
+            edge_x.extend([from_node['id'], to_node['id'], None])
+            edge_y.extend([0, 0, None])
+    
+    # Simple layout - position nodes radially
+    import math
+    x_coords, y_coords = [], []
+    center_idx = node_ids.index(email) if email in node_ids else 0
+    
+    for i, node in enumerate(nodes):
+        if i == center_idx:
+            x_coords.append(0)
+            y_coords.append(0)
+        else:
+            angle = 2 * math.pi * (i - 1) / (len(nodes) - 1) if len(nodes) > 1 else 0
+            radius = 1
+            x_coords.append(radius * math.cos(angle))
+            y_coords.append(radius * math.sin(angle))
+    
+    # Create edge traces
+    edge_trace_x, edge_trace_y = [], []
+    for edge in edges:
+        from_idx = node_ids.index(edge['from']) if edge['from'] in node_ids else -1
+        to_idx = node_ids.index(edge['to']) if edge['to'] in node_ids else -1
+        if from_idx >= 0 and to_idx >= 0:
+            edge_trace_x.extend([x_coords[from_idx], x_coords[to_idx], None])
+            edge_trace_y.extend([y_coords[from_idx], y_coords[to_idx], None])
+    
+    fig = go.Figure()
+    
+    # Add edges
+    fig.add_trace(go.Scatter(
+        x=edge_trace_x,
+        y=edge_trace_y,
+        line=dict(width=1, color='#888'),
+        hoverinfo='none',
+        mode='lines'
+    ))
+    
+    # Add nodes
+    fig.add_trace(go.Scatter(
+        x=x_coords,
+        y=y_coords,
+        text=node_labels,
+        mode='markers+text',
+        marker=dict(
+            size=node_sizes,
+            color=node_colors,
+            line=dict(width=2, color='white')
+        ),
+        textposition="bottom center",
+        hoverinfo='text'
+    ))
+    
+    fig.update_layout(
+        showlegend=False,
+        hovermode='closest',
+        margin=dict(b=0, l=0, r=0, t=0),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False),
+        height=500,
+        plot_bgcolor='white'
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # Legend
+    st.markdown("**Legend:**")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("🔵 **Email** - Central node")
+    with col2:
+        st.markdown("🔴 **Breaches** - Data breaches found")
+    with col3:
+        st.markdown("🟢 **Social Accounts** - Discovered social media profiles")
 
 
 def show_breach_check():
