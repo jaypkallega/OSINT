@@ -42,6 +42,8 @@ def run_sherlock(username: str) -> List[Dict[str, Any]]:
     Returns a list of found accounts.
     Uses --print-found for text output which is more reliable across versions.
     """
+    import tempfile
+    
     sherlock_cmd = get_venv_script_path("sherlock")
     results = []
     
@@ -49,14 +51,16 @@ def run_sherlock(username: str) -> List[Dict[str, Any]]:
     if not os.path.exists(sherlock_cmd):
         return [{"error": f"Sherlock executable not found at {sherlock_cmd}. Install with: pip install sherlock-project"}]
     
+    # Create a temporary file for JSON output as backup
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".json")
+    os.close(temp_fd)
+    
     try:
-        # Command: sherlock --timeout 5 --print-found --no-color <username>
-        # Using --print-found to only show found accounts, shorter timeout per site
+        # Try --print-found first (text output)
         cmd = [sherlock_cmd, "--timeout", "5", "--print-found", "--no-color", username]
         
         print(f"🔍 Running Sherlock: {' '.join(cmd)}")
         
-        # Run process with shorter overall timeout (30s for all sites)
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         result = subprocess.run(
             cmd,
@@ -71,49 +75,128 @@ def run_sherlock(username: str) -> List[Dict[str, Any]]:
             err_msg = result.stderr.strip()
             if "usage" in err_msg.lower() or "error:" in err_msg.lower():
                 print(f"⚠️ Sherlock command error: {err_msg}")
-                return [{"error": f"Sherlock command error: {err_msg}"}]
+                # Fallback: try with --json to a file
+                return _run_sherlock_json_fallback(sherlock_cmd, username, creationflags)
         
-        # Parse Sherlock output
-        # Format: "SiteName: https://url..." for found accounts
-        if not result.stdout.strip():
-            return [{"warning": f"No accounts found for username '{username}'"}]
-
-        # Parse line by line looking for found accounts
-        for line in result.stdout.splitlines():
-            line = line.strip()
-            if not line or line.startswith("[") or line.startswith("-") or line.startswith("INFO"):
-                continue
+        # Parse Sherlock text output
+        if result.stdout.strip():
+            for line in result.stdout.splitlines():
+                line = line.strip()
+                if not line or line.startswith("[") or line.startswith("-") or line.startswith("INFO"):
+                    continue
+                
+                # Look for lines with URLs (found accounts)
+                if "http" in line and ":" in line:
+                    parts = line.split(":", 1)
+                    if len(parts) >= 2:
+                        platform = parts[0].strip()
+                        url = parts[1].strip()
+                        if platform and url.startswith("http"):
+                            results.append({
+                                "platform": platform,
+                                "username": username,
+                                "url": url,
+                                "source_tool": "Sherlock",
+                                "status": "Found"
+                            })
             
-            # Look for lines with URLs (found accounts)
-            # Expected format: "Twitter: https://twitter.com/username"
-            if "http" in line and ":" in line:
-                parts = line.split(":", 1)
-                if len(parts) >= 2:
-                    platform = parts[0].strip()
-                    url = parts[1].strip()
-                    if platform and url.startswith("http"):
-                        results.append({
-                            "platform": platform,
-                            "username": username,
-                            "url": url,
-                            "source_tool": "Sherlock",
-                            "status": "Found"
-                        })
+            if results:
+                return results
         
-        if not results:
-            # If we got output but couldn't parse it, log it for debugging
-            if result.stdout.strip():
-                print(f"⚠️ Sherlock produced output but no URLs parsed. Output preview: {result.stdout[:200]}")
-            return [{"warning": f"No accounts found for username '{username}'"}]
-
+        # If text parsing failed, try JSON fallback
+        return _run_sherlock_json_fallback(sherlock_cmd, username, creationflags)
+        
     except FileNotFoundError:
         return [{"error": f"Sherlock executable not found at {sherlock_cmd}"}]
     except subprocess.TimeoutExpired:
         return [{"error": "Sherlock scan timed out after 30 seconds."}]
     except Exception as e:
         return [{"error": f"Sherlock error: {str(e)}"}]
+    finally:
+        # Clean up temp file
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
     
-    return results
+    return results if results else [{"warning": f"No accounts found for username '{username}'"}]
+
+
+def _run_sherlock_json_fallback(sherlock_cmd: str, username: str, creationflags: int) -> List[Dict[str, Any]]:
+    """Fallback method: run Sherlock with --json to a file."""
+    import tempfile
+    
+    temp_fd, temp_path = tempfile.mkstemp(suffix=".json")
+    os.close(temp_fd)
+    
+    try:
+        # Command: sherlock --json <tempfile> --timeout 30 <username>
+        cmd = [sherlock_cmd, "--json", temp_path, "--timeout", "30", "--no-color", username]
+        
+        print(f"🔍 Running Sherlock (JSON mode): {' '.join(cmd)}")
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            creationflags=creationflags
+        )
+        
+        # Check if the JSON file was created and has content
+        if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
+            if result.returncode != 0 and result.stderr:
+                print(f"⚠️ Sherlock JSON error: {result.stderr}")
+                return [{"error": f"Sherlock failed: {result.stderr}"}]
+            return [{"warning": f"No accounts found for username '{username}'"}]
+
+        # Parse the JSON file
+        try:
+            with open(temp_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            
+            # Sherlock JSON structure: { "username": { "site": { ... } } } or { "site": { ... } }
+            user_data = {}
+            if username in data:
+                user_data = data[username]
+            else:
+                user_data = data
+            
+            results = []
+            for site, info in user_data.items():
+                if isinstance(info, dict):
+                    status = info.get("status", {})
+                    http_status = status.get("http_status", 0)
+                    
+                    if http_status == 200:
+                        results.append({
+                            "platform": site,
+                            "username": username,
+                            "url": info.get("url", ""),
+                            "source_tool": "Sherlock",
+                            "status": "Found"
+                        })
+            
+            return results if results else [{"warning": f"No accounts found for username '{username}'"}]
+            
+        except json.JSONDecodeError as e:
+            print(f"⚠️ Error parsing Sherlock JSON file: {e}")
+            return [{"error": "Failed to parse Sherlock results."}]
+        except Exception as e:
+            print(f"⚠️ Error reading Sherlock results: {e}")
+            return [{"error": f"Error reading results: {str(e)}"}]
+            
+    except subprocess.TimeoutExpired:
+        return [{"error": "Sherlock scan timed out after 60 seconds."}]
+    except Exception as e:
+        return [{"error": f"Sherlock error: {str(e)}"}]
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
 
 def run_holehe(email: str) -> List[Dict[str, Any]]:
     """
