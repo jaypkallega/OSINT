@@ -183,8 +183,8 @@ def display_scan_results(result: Dict[str, Any]):
         st.metric("Social Accounts", accounts)
     
     with col4:
-        password_status = result.get('password_exposed', {})
-        if password_status.get('found'):
+        password_status = result.get('password_exposed') or {}
+        if password_status and password_status.get('found'):
             st.metric("Password Status", "⚠️ EXPOSED", delta="Critical")
         else:
             st.metric("Password Status", "✅ Safe")
@@ -193,9 +193,11 @@ def display_scan_results(result: Dict[str, Any]):
     st.markdown("---")
     
     # Breaches
-    if result.get('breaches'):
-        with st.expander(f"🚨 Data Breaches ({len(result['breaches'])})"):
-            for breach in result['breaches']:
+    breaches_list = result.get('breaches') or []
+    if breaches_list:
+        valid_breaches = [b for b in breaches_list if 'error' not in b and 'warning' not in b]
+        with st.expander(f"🚨 Data Breaches ({len(valid_breaches)})"):
+            for breach in breaches_list:
                 if 'error' in breach:
                     st.warning(f"Error: {breach['error']}")
                 elif 'warning' in breach:
@@ -209,11 +211,15 @@ def display_scan_results(result: Dict[str, Any]):
                     st.markdown("---")
     
     # Social accounts
-    if result.get('social_accounts'):
-        with st.expander(f"🌐 Social Media Accounts ({len(result['social_accounts'])})"):
-            df = pd.DataFrame(result['social_accounts'])
-            if not df.empty:
-                st.dataframe(df[['platform', 'username', 'url', 'source_tool']], use_container_width=True)
+    social_list = result.get('social_accounts') or []
+    if social_list:
+        valid_accounts = [a for a in social_list if 'error' not in a]
+        with st.expander(f"🌐 Social Media Accounts ({len(valid_accounts)})"):
+            if valid_accounts:
+                df = pd.DataFrame(valid_accounts)
+                if not df.empty:
+                    display_cols = [c for c in ['platform', 'username', 'url', 'source_tool'] if c in df.columns]
+                    st.dataframe(df[display_cols], use_container_width=True)
     
     # Password exposure
     if result.get('password_exposed'):
@@ -221,8 +227,8 @@ def display_scan_results(result: Dict[str, Any]):
             pwd_result = result['password_exposed']
             if 'error' in pwd_result:
                 st.error(pwd_result['error'])
-            elif pwd_result.get('found'):
-                st.error(f"❌ This password was found in **{pwd_result['count']:,}** breaches!")
+            elif pwd_result and pwd_result.get('found'):
+                st.error(f"❌ This password was found in **{pwd_result.get('count', 0):,}** breaches!")
                 st.warning("Change this password immediately on all accounts where you use it.")
             else:
                 st.success("✅ Good news! This password wasn't found in known breaches.")
@@ -242,12 +248,12 @@ def show_breach_check():
                 result = perform_scan(email=email)
                 
                 if result and result.get('breaches'):
-                    breach_count = len([b for b in result['breaches'] if 'error' not in b])
+                    breach_count = len([b for b in (result.get('breaches') or []) if 'error' not in b])
                     
                     if breach_count > 0:
                         st.error(f"⚠️ Found in **{breach_count}** data breaches!")
                         
-                        for breach in result['breaches']:
+                        for breach in (result.get('breaches') or []):
                             if 'Name' in breach:
                                 with st.container():
                                     st.markdown(f"### {breach['Name']}")
@@ -258,7 +264,11 @@ def show_breach_check():
                                         if breach.get('DataClasses'):
                                             st.write(f"**Data types:** {', '.join(breach['DataClasses'])}")
                                     with col2:
-                                        st.metric("Accounts", f"{breach.get('PwnCount', 'N/A'):,}")
+                                        pwn_count = breach.get('PwnCount')
+                                        if pwn_count:
+                                            st.metric("Accounts", f"{pwn_count:,}")
+                                        else:
+                                            st.metric("Accounts", "N/A")
                                     st.markdown("---")
                     else:
                         st.success("✅ No breaches found for this email!")
@@ -285,7 +295,7 @@ def show_social_footprint():
                 result = perform_scan(email=email or f"{username}@test.com", username=username)
                 
                 if result and result.get('social_accounts'):
-                    accounts = [a for a in result['social_accounts'] if 'error' not in a]
+                    accounts = [a for a in (result.get('social_accounts') or []) if 'error' not in a]
                     
                     if accounts:
                         st.success(f"Found **{len(accounts)}** social media accounts!")
@@ -294,20 +304,25 @@ def show_social_footprint():
                         df = pd.DataFrame(accounts)
                         
                         # Group by platform
-                        platform_counts = df['platform'].value_counts()
-                        
-                        col1, col2 = st.columns(2)
-                        with col1:
-                            st.subheader("By Platform")
-                            st.bar_chart(platform_counts)
-                        
-                        with col2:
-                            st.subheader("By Tool")
-                            tool_counts = df['source_tool'].value_counts()
-                            st.bar_chart(tool_counts)
-                        
-                        st.subheader("All Discovered Accounts")
-                        st.dataframe(df, use_container_width=True)
+                        if 'platform' in df.columns:
+                            platform_counts = df['platform'].value_counts()
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.subheader("By Platform")
+                                st.bar_chart(platform_counts)
+                            
+                            with col2:
+                                st.subheader("By Tool")
+                                if 'source_tool' in df.columns:
+                                    tool_counts = df['source_tool'].value_counts()
+                                    st.bar_chart(tool_counts)
+                            
+                            st.subheader("All Discovered Accounts")
+                            display_cols = [c for c in ['platform', 'username', 'url', 'source_tool'] if c in df.columns]
+                            st.dataframe(df[display_cols], use_container_width=True)
+                        else:
+                            st.dataframe(df, use_container_width=True)
                     else:
                         st.info("No social accounts found for this username")
                 else:
@@ -370,16 +385,16 @@ def show_exposure_score():
             # Recommendations
             st.markdown("### 📋 Recommendations")
             
-            if score_data.get('breach_count', 0) > 0:
+            if score_data and score_data.get('breach_count', 0) > 0:
                 st.write("- ✅ Change passwords for breached accounts")
                 st.write("- ✅ Enable two-factor authentication")
                 st.write("- ✅ Use a password manager")
             
-            if score_data.get('social_account_count', 0) > 10:
+            if score_data and score_data.get('social_account_count', 0) > 10:
                 st.write("- ✅ Review and delete unused social media accounts")
                 st.write("- ✅ Adjust privacy settings on active accounts")
             
-            if score_data.get('password_compromised'):
+            if score_data and score_data.get('password_compromised'):
                 st.write("- 🔴 **URGENT:** Change compromised password immediately")
                 st.write("- Never reuse passwords across multiple sites")
         else:
