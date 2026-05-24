@@ -18,6 +18,10 @@ class Neo4jGraph:
     
     def connect(self) -> bool:
         """Establish connection to Neo4j"""
+        if not settings.NEO4J_ENABLED:
+            print("ℹ️ Neo4j is disabled (set NEO4J_ENABLED=true to enable)")
+            return False
+        
         try:
             self.driver = GraphDatabase.driver(
                 self.uri,
@@ -25,9 +29,12 @@ class Neo4jGraph:
             )
             # Test connection
             self.driver.verify_connectivity()
+            print("✅ Neo4j connected successfully")
             return True
         except Exception as e:
-            print(f"Neo4j connection failed: {e}")
+            print(f"⚠️ Neo4j connection failed: {e}")
+            print("   The app will continue without graph features.")
+            print("   To enable: 1) Install Neo4j, 2) Set NEO4J_ENABLED=true")
             return False
     
     def disconnect(self):

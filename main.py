@@ -90,10 +90,14 @@ async def root():
 @app.get("/api/health")
 async def health_check():
     """Detailed health check"""
+    graph = get_graph()
+    neo4j_status = "connected" if graph.driver else "disabled"
+    
     return {
         "backend": "ok",
         "database": "ok",
-        "neo4j": "connected" if get_graph().driver else "disconnected"
+        "neo4j": neo4j_status,
+        "neo4j_enabled": settings.NEO4J_ENABLED
     }
 
 
