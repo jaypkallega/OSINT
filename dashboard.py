@@ -149,9 +149,6 @@ def show_dashboard():
                     if result:
                         st.session_state['last_scan'] = result
                         st.success("✅ Scan completed!")
-                        
-                        # Display results
-                        display_scan_results(result)
                     else:
                         st.error("Scan failed. Is the backend running?")
             else:
@@ -228,7 +225,8 @@ def display_scan_results(result: Dict[str, Any]):
         st.subheader("🕸️ Relationship Graph")
         st.write("Visualize connections between email, breaches, and social accounts")
     with col2:
-        if st.button("🕸️ View Graph", use_container_width=True, key=f"view_graph_btn_{result.get('email', 'unknown')}"):
+        graph_key = f"view_graph_btn_{result.get('email', 'unknown')}_{id(result)}"
+        if st.button("🕸️ View Graph", use_container_width=True, key=graph_key):
             show_relationship_graph(result)
     
     # Password exposure
