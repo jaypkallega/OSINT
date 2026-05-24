@@ -9,6 +9,7 @@ requests>=2.31.0
 pwnedpasswords>=2.0.0
 pwnedapi>=1.0.2
 neo4j>=5.18.0
+py2neo>=2021.2.4
 celery>=5.3.4
 redis>=5.0.1
 apscheduler>=3.10.4

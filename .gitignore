@@ -1,4 +1,56 @@
 ```
+# Dependencies
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+.env
+.env.local
+.env.*
+.venv/
+venv/
+ENV/
+env.bak/
+.ENV/
+.python-version
+requirements.txt.bak
+
+# Testing
+.coverage
+coverage/
+htmlcov/
+.nyc_output/
+istanbul/
+.mypy_cache/
+.pytest_cache/
+.hypothesis/
+
+# Logs
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Icon?
+```
+
+Wait, let me reconsider. The only changes are:
+- Added: INSTALL_GUIDE.md, tools/domain_doc.py
+- Modified: requirements.txt
+- No build artifacts, dependencies, or temp files present
+
+Since this appears to be a Python project (based on the .py file and requirements.txt), but there are no actual build artifacts in the changes, I should not add extensive ignore rules for things that aren't present in the changes.
+
+```
 __pycache__/
 *.pyc
 ```
