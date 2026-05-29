@@ -40,7 +40,7 @@ def run_sherlock(username: str) -> List[Dict[str, Any]]:
     """
     Runs Sherlock to find social media accounts by username.
     Returns a list of found accounts.
-    Uses --print-found for text output which is more reliable across versions.
+    Directly uses --json <file> method for reliability on all Sherlock versions.
     """
     import tempfile
     
@@ -51,86 +51,14 @@ def run_sherlock(username: str) -> List[Dict[str, Any]]:
     if not os.path.exists(sherlock_cmd):
         return [{"error": f"Sherlock executable not found at {sherlock_cmd}. Install with: pip install sherlock-project"}]
     
-    # Create a temporary file for JSON output as backup
+    # Create a temporary file for JSON output
     temp_fd, temp_path = tempfile.mkstemp(suffix=".json")
     os.close(temp_fd)
     
-    try:
-        # Try --print-found first (text output)
-        cmd = [sherlock_cmd, "--timeout", "5", "--print-found", "--no-color", username]
-        
-        print(f"🔍 Running Sherlock: {' '.join(cmd)}")
-        
-        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            creationflags=creationflags
-        )
-        
-        # Check for command-line errors first
-        if result.returncode != 0 and result.stderr:
-            err_msg = result.stderr.strip()
-            if "usage" in err_msg.lower() or "error:" in err_msg.lower():
-                print(f"⚠️ Sherlock command error: {err_msg}")
-                # Fallback: try with --json to a file
-                return _run_sherlock_json_fallback(sherlock_cmd, username, creationflags)
-        
-        # Parse Sherlock text output
-        if result.stdout.strip():
-            for line in result.stdout.splitlines():
-                line = line.strip()
-                if not line or line.startswith("[") or line.startswith("-") or line.startswith("INFO"):
-                    continue
-                
-                # Look for lines with URLs (found accounts)
-                if "http" in line and ":" in line:
-                    parts = line.split(":", 1)
-                    if len(parts) >= 2:
-                        platform = parts[0].strip()
-                        url = parts[1].strip()
-                        if platform and url.startswith("http"):
-                            results.append({
-                                "platform": platform,
-                                "username": username,
-                                "url": url,
-                                "source_tool": "Sherlock",
-                                "status": "Found"
-                            })
-            
-            if results:
-                return results
-        
-        # If text parsing failed, try JSON fallback
-        return _run_sherlock_json_fallback(sherlock_cmd, username, creationflags)
-        
-    except FileNotFoundError:
-        return [{"error": f"Sherlock executable not found at {sherlock_cmd}"}]
-    except subprocess.TimeoutExpired:
-        return [{"error": "Sherlock scan timed out after 30 seconds."}]
-    except Exception as e:
-        return [{"error": f"Sherlock error: {str(e)}"}]
-    finally:
-        # Clean up temp file
-        if os.path.exists(temp_path):
-            try:
-                os.remove(temp_path)
-            except Exception:
-                pass
-    
-    return results if results else [{"warning": f"No accounts found for username '{username}'"}]
-
-
-def _run_sherlock_json_fallback(sherlock_cmd: str, username: str, creationflags: int) -> List[Dict[str, Any]]:
-    """Fallback method: run Sherlock with --json to a file."""
-    import tempfile
-    
-    temp_fd, temp_path = tempfile.mkstemp(suffix=".json")
-    os.close(temp_fd)
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
     
     try:
+        # Directly use --json <filename> which works on all Sherlock versions
         # Command: sherlock --json <tempfile> --timeout 30 <username>
         cmd = [sherlock_cmd, "--json", temp_path, "--timeout", "30", "--no-color", username]
         
@@ -144,10 +72,17 @@ def _run_sherlock_json_fallback(sherlock_cmd: str, username: str, creationflags:
             creationflags=creationflags
         )
         
+        # Check for command-line errors (usage errors, argument errors, etc.)
+        if result.returncode != 0 and result.stderr:
+            err_msg = result.stderr.strip()
+            if "usage" in err_msg.lower() or "error:" in err_msg.lower() or "expected one argument" in err_msg.lower():
+                print(f"⚠️ Sherlock command error: {err_msg}")
+                return [{"error": f"Sherlock command failed: {err_msg}"}]
+        
         # Check if the JSON file was created and has content
         if not os.path.exists(temp_path) or os.path.getsize(temp_path) == 0:
             if result.returncode != 0 and result.stderr:
-                print(f"⚠️ Sherlock JSON error: {result.stderr}")
+                print(f"⚠️ Sherlock error (no output): {result.stderr}")
                 return [{"error": f"Sherlock failed: {result.stderr}"}]
             return [{"warning": f"No accounts found for username '{username}'"}]
 
@@ -163,7 +98,6 @@ def _run_sherlock_json_fallback(sherlock_cmd: str, username: str, creationflags:
             else:
                 user_data = data
             
-            results = []
             for site, info in user_data.items():
                 if isinstance(info, dict):
                     status = info.get("status", {})
@@ -182,6 +116,13 @@ def _run_sherlock_json_fallback(sherlock_cmd: str, username: str, creationflags:
             
         except json.JSONDecodeError as e:
             print(f"⚠️ Error parsing Sherlock JSON file: {e}")
+            # Try to read raw content for debugging
+            try:
+                with open(temp_path, 'r', encoding='utf-8') as f:
+                    raw_content = f.read()
+                print(f"Raw JSON content: {raw_content[:500]}")
+            except Exception:
+                pass
             return [{"error": "Failed to parse Sherlock results."}]
         except Exception as e:
             print(f"⚠️ Error reading Sherlock results: {e}")
@@ -192,11 +133,14 @@ def _run_sherlock_json_fallback(sherlock_cmd: str, username: str, creationflags:
     except Exception as e:
         return [{"error": f"Sherlock error: {str(e)}"}]
     finally:
+        # Clean up temp file
         if os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
             except Exception:
                 pass
+    
+    return results if results else [{"warning": f"No accounts found for username '{username}'"}]
 
 def run_holehe(email: str) -> List[Dict[str, Any]]:
     """
